@@ -3,8 +3,10 @@ import re
 import json
 import logging
 import subprocess
+import urllib.parse
 
 from html.parser import HTMLParser
+from mkdocs.structure.pages import Page
 
 try:
     from lunr import lunr
@@ -49,6 +51,36 @@ class SearchIndex:
             'text': text,
             'location': loc
         })
+
+    def add_entry_from_rdoc_file(self, file):
+        """
+        Create a set of entries in the index for a static html file
+        containing yard docs, one for each of its heading tags.
+        """
+
+        page = Page(None, file, self.config)
+        with open(file.abs_src_path, 'r') as io: page.content = io.read()
+
+        parser = RdocParser()
+        parser.feed(page.content)
+        parser.close()
+        page.title = parser.title
+
+        # add an empty page entry
+        self._add_entry(title=page.title, text='', loc=page.url)
+
+        # and then index the sections
+        for section in parser.data:
+            if section.id:
+                url = page.url + "#" + urllib.parse.quote(section.id)
+            else:
+                # to make sure we index this section separately, we generate a fake id and ignore
+                # the fact that the anchor won't exist if the user clicks
+                url = page.url + "#" + urllib.parse.quote(section.title)
+
+            self._add_entry(title=section.title,
+                            text=' '.join(section.text),
+                            loc=url)
 
     def add_entry_from_context(self, page):
         """
@@ -228,3 +260,77 @@ class ContentParser(HTMLParser):
     @property
     def stripped_html(self):
         return '\n'.join(self._stripped_html)
+
+class RdocParser(HTMLParser):
+    """
+    Given a block of HTML, group the content under the preceding
+    heading tags which can then be used for creating an index
+    for that section.
+    """
+
+    def __init__(self, *args, **kwargs):
+
+        super().__init__(*args, **kwargs)
+
+        self.data = []
+        self.section = None
+        self.title = None
+        self.header_tag = None
+        self.skip = False
+
+    def handle_starttag(self, tag, attrs):
+        """Called at the start of every HTML tag."""
+
+        if tag in ["pre"]:
+            self.skip = True
+
+        if tag not in ([f"h{x}" for x in range(1, 4)]):
+            return
+
+        self.header_tag = tag
+        self.section = ContentSection()
+        self.data.append(self.section)
+
+        for attr in attrs:
+            if attr[0] == "id":
+                self.section.id = attr[1]
+
+    def handle_endtag(self, tag):
+        """Called at the end of every HTML tag."""
+
+        if tag in ["pre"]:
+            self.skip = False
+
+        if tag not in ([f"h{x}" for x in range(1, 4)]):
+            return
+
+        self.header_tag = None
+
+    def handle_data(self, data):
+        """
+        Called for the text contents of each tag.
+        """
+
+        if self.skip or (self.section is None):
+            # we don't care about content above the first header tag
+            return
+
+        if not self.header_tag:
+            self.section.text.append(data.strip())
+        else:
+            if self.header_tag == "h3":
+                # accumulate h3 title across multiple children nodes
+                if self.section.title:
+                    self.section.title = re.sub(" ?[\.#] ?", "#", (self.section.title + " " + data.strip()))
+                else:
+                    self.section.title = self.title + data.strip()
+            else:  # h1 or h2
+                if not self.section.title:
+                    maybe_title = data.strip()
+                    if len(maybe_title) > 0:
+                        if self.header_tag == "h1":
+                            self.section.title = maybe_title
+                            if not self.title:
+                                self.title = maybe_title
+                        else:
+                            self.section.title = self.title + " / " + maybe_title
