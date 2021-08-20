@@ -5,6 +5,7 @@ from mkdocs.plugins import BasePlugin
 from mkdocs.config import config_options
 from mkdocs.contrib.search.search_index import SearchIndex
 
+import fnmatch
 
 log = logging.getLogger(__name__)
 base_path = os.path.dirname(os.path.abspath(__file__))
@@ -70,6 +71,14 @@ class SearchPlugin(BasePlugin):
     def on_page_context(self, context, **kwargs):
         "Add page to search index."
         self.search_index.add_entry_from_context(context['page'])
+
+    def on_files(self, files, config, **kwargs):
+        rdoc_files = filter(lambda f: fnmatch.fnmatch(f.src_path, "rdoc/[A-Z]*.html"),
+                            files.static_pages())
+        for file in rdoc_files:
+            log.debug('Indexing ' + file.src_path)
+            self.search_index.add_entry_from_rdoc_file(file)
+        files
 
     def on_post_build(self, config, **kwargs):
         "Build search index."
