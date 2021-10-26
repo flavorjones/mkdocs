@@ -5,6 +5,7 @@ import logging
 import subprocess
 import urllib.parse
 
+from bs4 import BeautifulSoup
 from html.parser import HTMLParser
 from mkdocs.structure.pages import Page
 
@@ -54,6 +55,46 @@ class SearchIndex:
 
     def add_entry_from_rdoc_file(self, file):
         """
+        Create a set of entries in the index for a static html file containing rdoc docs.
+        """
+
+        page_url = Page(None, file, self.config).url
+        with open(file.abs_src_path, 'r') as io: page_content = io.read()
+        page = BeautifulSoup(page_content, 'html.parser')
+
+        page_title = page.main.h1.get_text().strip()
+        if page_description := page.find("section", class_="description"):
+            self._add_entry(title=page_title, text=str(page_description), loc=page_url)
+        else:
+            self._add_entry(title=page_title, text='', loc=page_url)
+
+        for method in page.find_all("div", class_="method-detail"):
+            if (heading := method.find("div", class_="method-heading")) is None: continue
+
+            section_id = method['id']
+            section_url = page_url + "#" + section_id
+
+            section_text = ''
+            if description := method.find("div", class_="method-description"):
+                for p in description.find_all("p"):
+                    if p is not None:
+                        section_text += str(p)
+
+            section_title = ''
+            for class_ in ["method-callseq", "method-name", "method-args"]:
+                if node := heading.find("span", class_=class_):
+                    section_title += node.get_text()
+            section_title = section_title.strip()
+            if section_id.startswith('method-c-'):
+                section_title = page_title + "." + section_title
+            else:
+                section_title = page_title + "#" + section_title
+
+            log.debug("method: " + section_title)
+            self._add_entry(title=section_title, text=section_text, loc=section_url)
+
+    def add_entry_from_yardoc_file(self, file):
+        """
         Create a set of entries in the index for a static html file
         containing yard docs, one for each of its heading tags.
         """
@@ -61,7 +102,7 @@ class SearchIndex:
         page = Page(None, file, self.config)
         with open(file.abs_src_path, 'r') as io: page.content = io.read()
 
-        parser = RdocParser()
+        parser = YardocParser()
         parser.feed(page.content)
         parser.close()
         page.title = parser.title
@@ -261,7 +302,7 @@ class ContentParser(HTMLParser):
     def stripped_html(self):
         return '\n'.join(self._stripped_html)
 
-class RdocParser(HTMLParser):
+class YardocParser(HTMLParser):
     """
     Given a block of HTML, group the content under the preceding
     heading tags which can then be used for creating an index

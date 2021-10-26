@@ -82,10 +82,16 @@ class SearchPlugin(BasePlugin):
         self.search_index.add_entry_from_context(context['page'])
 
     def on_files(self, files, config, **kwargs):
+        yardoc_files = filter(lambda f: fnmatch.fnmatch(f.src_path, "yardoc/[A-Z]*.html"),
+                              files.static_pages())
+        for file in yardoc_files:
+            log.info('Indexing yardoc ' + file.src_path)
+            self.search_index.add_entry_from_yardoc_file(file)
+
         rdoc_files = filter(lambda f: fnmatch.fnmatch(f.src_path, "rdoc/[A-Z]*.html"),
                             files.static_pages())
         for file in rdoc_files:
-            log.debug('Indexing ' + file.src_path)
+            log.info('Indexing rdoc ' + file.src_path)
             self.search_index.add_entry_from_rdoc_file(file)
         files
 
